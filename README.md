@@ -7,3 +7,5 @@ To use it, you need a [Last.FM API key](http://www.last.fm/api/account). This sh
 Last.FM configuration page, found at admin/config/media/lastfm.
 
 Install it like any other Drupal module. For a live demo, check out [the Flow Arts page on my website](http://n00bsys0p.co.uk/flowarts).
+
+Clone into folder "lastfm" in sites/all/modules. This is required to conform with Drupal's naming conventions.
