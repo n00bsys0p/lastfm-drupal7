@@ -1,0 +1,9 @@
+ol.lastfm-top-artists li {
+	border-bottom: 1px dotted black;
+}
+
+.lastfm-artist {
+	background: white;
+	border: 1px solid black;
+	padding: 4px 4px 20px 4px;
+}

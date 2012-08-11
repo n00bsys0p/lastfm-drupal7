@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * @file lastfm.install
+ * Contains install and update functions for Last.fm demo module.
+ */
+
+/**
+ * Last.fm module schema;
+ */
+function lastfm_schema() {
+  // Borrow the structure from Drupal's system cache
+  $schema['cache_lastfm'] = drupal_get_schema_unprocessed('system', 'cache');
+  $schema['cache_lastfm']['description'] = 'Cache table for Last.fm integration module. Prevents onerous amounts of API calls.';
+  return $schema;
+}

@@ -1,0 +1,332 @@
+<?php
+//s $Id$
+
+/**
+ * @file
+ * This is a Last.fm API integration module.
+ *
+ * @author: Alex Shepherd <n00b@n00bsys0p.co.uk>
+ * 
+ * Based on code by Joshua Schroeder (jdschroeder) found at
+ * https://bitbucket.org/jdschroeder/lastfm/
+ */
+
+/**
+ * Defining constants.
+ */
+ 
+// Since the API address may change, let's keep it up front as a constant.
+define('LASTFM_API_URL', 'http://ws.audioscrobbler.com/2.0');
+
+// The API key, secret, and username we need to sign up for at Last.fm.
+define('LASTFM_API_KEY', variable_get('lastfm_api_key', ''));
+define('LASTFM_API_SECRET', variable_get('lastfm_api_secret', ''));
+define('LASTFM_USERNAME', variable_get('lastfm_username', ''));
+define('LASTFM_NUM_RECENT', variable_get('lastfm_num_recent',''));
+
+// This is the time in seconds that our cached items should live.
+define('LASTFM_CACHE_EXPIRE', 3600);
+
+/**
+ * Implementation of hook_permission().
+ * 
+ * This is where we define the permission levels associated with this module.
+ */
+function lastfm_permission() {
+  return array('administer lastfm');
+}
+
+/**
+ * Implementation of hook_flush_caches().
+ * 
+ * We need to define our cache table to it gets flushed with clear cache commands are executed.
+ */
+function lastfm_flush_caches() {
+  return array('cache_lastfm');
+}
+
+/**
+ * Implementation of hook_menu().
+ * 
+ * This defines our internal paths and the callback functions for each of them.
+ */
+function lastfm_menu() {
+  $items = array();
+
+  // This defines the path for our admin settings page.
+  $items['admin/config/media/lastfm'] = array(
+    'title' => 'Last.fm settings',
+    'description' => 'Configure the Last.fm module.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('form_lastfm_settings'),
+    'access arguments' => array('administer lastfm')
+  );
+  
+  return $items;
+}
+
+
+/**
+ * Callback function for Last.fm admin settings.
+ */
+function form_lastfm_settings() {
+
+  // Define our settings fields using Drupal's Forms API
+  $form['lastfm_api_key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('API Key'),
+    '#description' => t('Your API key from !lastfm', array('!lastfm' => l('Last.fm', 'http://last.fm/api'))),
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#default_value' => variable_get('lastfm_api_key', ''),
+    '#required' => TRUE, 
+  );
+  
+  $form['lastfm_api_secret'] = array(
+    '#type' => 'textfield',
+    '#title' => t('API Secret'),
+    '#description' => t('Your API secret from !lastfm', array('!lastfm' => l('Last.fm', 'http://last.fm/api'))),
+    '#size' => 60,
+    '#maxlength' => 255,
+    '#default_value' => variable_get('lastfm_api_secret', ''),
+    '#required' => TRUE,
+  );
+  
+  $form['lastfm_username'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Last.fm Username'),
+    '#description' => t('The !lastfm username for the account you want use.', array('!lastfm' => l('Last.fm', 'http://last.fm/api'))),
+    '#size' => 40,
+    '#maxlength' => 255,
+    '#default_value' => variable_get('lastfm_username', ''),
+    '#required' => TRUE,
+  );
+
+  $form['lastfm_num_recent']   = array(
+    '#type' => 'select',
+    '#title' => t('Recent plays'),
+    '#description' => t('Number of recent plays to show in the Last.fm recent plays block'),
+    '#options' => range(0, 20),
+    '#default_value' => variable_get('lastfm_num_recent', '10'),
+    '#required' => TRUE,
+  );
+
+  return system_settings_form($form);
+
+}
+
+/**
+ * Implementation of hook_block_info()
+ */
+function lastfm_block_info() {
+  $blocks['recent'] = array(
+    'info' => t('Last.fm Recently Played block'),
+    'cache' => DRUPAL_CACHE_PER_ROLE, // Default
+  );
+
+  $blocks['topartists'] = array(
+    'info' => t('Last.fm Top Artists block'),
+    'cache' => DRUPAL_CACHE_PER_ROLE,
+  );
+
+  return $blocks;
+}
+
+/**
+ * Implementation of hook_block_view()
+ *
+ * Set up both the blocks (top artists, recent plays)
+ */
+function lastfm_block_view($delta = '') {
+  // Set variables
+  $limit = LASTFM_NUM_RECENT;
+  $block = array();
+  $headers = array();
+  $items = array();
+
+  // Build content dependent on block type
+  switch($delta) {
+    case 'recent':
+      // Build the Recently Played block
+      $block['subject'] = t('Recently Played on Last.fm');
+      if(user_access('access content')) {
+        $result = lastfm_get_object('user.getRecentTracks',
+                                    array('user' => LASTFM_USERNAME,
+                                          'limit' => $limit),
+                                    true);
+
+        if(empty($result) or property_exists($result, 'error')) {
+          if(property_exists($result, 'error')) {
+            $block['content'] = t('Error: '.$result->message);
+          } else {
+            $block['content'] = t('No recently played tracks found');
+          }
+        } else {
+          for($i = 0; $i < $limit; $i++) {
+            // Retrieve information from the retrieved data
+            $res = $result->recenttracks->track;
+            $artist = $res[$i]->artist->{'#text'};
+            $track = $res[$i]->name;
+            $album = $res[$i]->album->{'#text'};
+            $url = $res[$i]->url;
+            $imgurl = $res[$i]->image[3]->{'#text'};
+
+            // If image is blank, set to the lastfm logo
+            if($imgurl == '') {
+              $modulepath = drupal_get_path('module', 'lastfm');
+              $imgurl = $modulepath.'/files/lastfm.png';
+            }
+
+            // Configure the contents of the table
+            $headers = array(array('data' => 'Album Cover',
+                                   'width' => 90),
+                             array('data' => 'Track'));
+
+            $imghtml = '<img width="75" height="75" src="'.$imgurl.'" />';
+
+            $trktxt = $track.'<br />';
+            if($artist != '')
+              $arttxt = 'by '.$artist.'<br />';
+            else
+              $arttxt = '<br />';
+
+            if($album != '')
+              $albtxt = 'from '.$album;
+            else
+              $albtxt = '';
+
+            $text = $trktxt.$arttxt.$albtxt;
+
+            $items[] = array(
+              l($imghtml, $url, array(
+                                  'html' => true,
+                                  'attributes' => array(
+                                                    'target' => '_blank'))),
+              l($text, $url, array(
+                                  'html' => true,
+                                  'attributes' => array(
+                                                    'target' => '_blank'))),
+            );
+
+            $block['content'] = theme('table',
+                                      array(
+                                        'header' => $headers,
+                                        'rows' => $items,
+                                        'attributes' => array(),
+                                        'sticky' => false,
+                                        'caption' => '',
+                                        'colgroups' => array(),
+                                        'empty' => t('No tracks to display: '.$delta)
+                                      )
+                                    );
+          }
+        }
+      }
+      break;
+
+    // Configure Top Artists block
+    case 'topartists':
+      $block['subject'] = t('My Top Artists on Last.fm');
+
+      if(user_access('access content')) {
+        $result = lastfm_get_object('user.getTopArtists',
+                                    array('user' => LASTFM_USERNAME,
+                                          'limit' => $limit),
+                                          true);
+
+        if(empty($result) or property_exists($result, 'error')) {
+          if(property_exists($result, 'error')) {
+            $block['content'] = t('Error: '.$result->message);
+          } else {
+          $block['content'] = t('No Top artists found');
+          }
+        } else {
+          $headers = array(array('data' => 'Image',
+                                 'width' => 90,),
+                           array('data' => 'Artist',));
+
+          $res = $result->topartists->artist;
+
+          for($i = 0; $i < $limit; $i++) {
+            $url = $res[$i]->url;
+            $imgurl = $res[$i]->image[2]->{'#text'};
+
+            // If image is blank, set to the lastfm logo
+            if($imgurl == '') {
+              $modulepath = drupal_get_path('module', 'lastfm');
+              $imgurl = $modulepath.'/files/lastfm.png';
+            }
+            $imghtml = '<img width="75" height="75" src="'.$imgurl.'" />';
+
+            // Configure table rows
+            $items[] = array(
+              l($imghtml, $url, array(
+                                  'html' => true,
+                                  'attributes' => array(
+                                                    'target' => '_blank'))),
+              l($res[$i]->name, $url, array(
+                                  'attributes' => array(
+                                                    'target' => '_blank'))),
+            );
+            $block['content'] = theme('table', array(
+                                      'header' => $headers,
+                                      'rows' => $items,
+                                      'attributes' => array(),
+                                      'sticky' => false,
+                                      'caption' => '',
+                                      'colgroups' => array(),
+                                      'empty' => t('No tracks to display: '.$delta)
+                                      ));
+          }
+        }
+     } 
+      break;
+  }
+  return $block;
+}
+
+/**
+ * Retrieve information from Last.fm's API.
+ * 
+ * We do some cache handling here as well.
+ */
+function lastfm_get_object($method, $params = array(), $no_cache = FALSE) {
+
+  // Create a string of parameters from the $params array.
+  $param_keys = array_keys($params);
+  $param_values = array();
+  foreach($param_keys as $key) {
+    $param_values[] = sprintf('%s=%s', $key, $params[$key]);
+  }
+  $param_string = '&' . implode('&', $param_values);
+
+  // If we aren't suppressing caching, create an identifier and retrieve a cached copy if it exists.
+  if(!$no_cache) {
+    $cache_id = substr('lastfm_' . str_replace(array('/', '&', '='), '_', $method . $param_string), 0, 255);
+    $cached = cache_get($cache_id, 'cache_lastfm');
+  } else {
+    $cached = false;
+  }
+  
+  // If we don't have a cached version or we are suppressing caching, make a call to Last.fm
+  if(!$cached || $no_cache) {
+    $url = sprintf('%s/?method=%s&api_key=%s&format=json%s', 
+      LASTFM_API_URL, $method, LASTFM_API_KEY, $param_string);
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    $response_body = curl_exec($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    
+    // If we aren't suppressing caching, save a copy to the cache table.
+    if(!$no_cache) {
+      cache_set($cache_id, $response_body, 'cache_lastfm', time() + LASTFM_CACHE_EXPIRE);
+    }
+  }
+  else {
+    // If we are using a cached copy.
+    $response_body = $cached->data;
+  }
+  
+  // Convert the JSON value to a PHP object and return it.
+  return json_decode($response_body);
+}
