@@ -33,7 +33,11 @@ define('LASTFM_CACHE_EXPIRE', 3600);
  * This is where we define the permission levels associated with this module.
  */
 function lastfm_permission() {
-  return array('administer lastfm');
+  return array('administer lastfm' => array(
+      'title' => t('Administer Last.fm'),
+      'description' => t('Administer the Last.fm module\'s settings.'),
+    ),
+  );
 }
 
 /**
